@@ -8,11 +8,18 @@ Open `index.html` in any browser with WebGL2. There is no build step and there a
 
 | Input | Action |
 | --- | --- |
-| Click / tap the van | Open or close the side doors facing you |
-| Drag | Orbit the camera |
+| Click / tap the van, or Enter | Open or close the side doors facing you |
+| Drag, or arrow keys | Orbit the camera |
 | Wheel / pinch | Zoom |
-| Arrow keys, Enter / Space | Orbit and toggle the doors from the keyboard |
-| **Raw splats** button | Show the gaussians without the pixel-art pass |
+| Pixel size slider | Size of one art pixel, 1 to 12 screen pixels |
+| C | Next palette: crimson, midnight, pico-8, c64, game boy, 1-bit |
+| O | Toggle the one-pixel outline |
+| D | Toggle ordered dithering |
+| Space | Pause the animation (the camera still orbits) |
+| R | Show the raw gaussians without the pixel-art pass |
+| H | Hide or show the control panel |
+
+Every key also has a button in the panel, which reports the splat count, render resolution, frame rate and palette.
 
 ## How it works
 

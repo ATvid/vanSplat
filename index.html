@@ -11,6 +11,8 @@
   --ink: #07070c;
   --paper: #fff3e6;
   --flame: #ffd23e;
+  --muted: #9a9ab5;
+  --panel: rgba(30, 30, 43, .92);
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   color-scheme: dark;
 }
@@ -22,26 +24,56 @@ body { margin: 0; background: var(--sky); color: var(--paper); overflow: hidden;
 #stage.hot { cursor: pointer; }
 #stage canvas { position: absolute; left: 0; top: 0; image-rendering: pixelated; image-rendering: crisp-edges; image-rendering: pixelated; }
 #hud { pointer-events: none; }
-#raw {
-  position: fixed;
-  right: max(16px, env(safe-area-inset-right, 0px));
-  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
-  font: 700 11px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase;
-  color: var(--paper); background: var(--ink);
-  border: 2px solid var(--paper); border-radius: 0; padding: 8px 10px; cursor: pointer;
+#panel {
+  position: fixed; box-sizing: border-box;
+  left: max(16px, env(safe-area-inset-left, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  max-width: calc(100% - 32px); padding: 12px 16px;
+  display: grid; gap: 4px;
+  font: 13px/1.5 var(--mono); color: var(--paper);
+  background: var(--panel); border: 2px solid var(--ink);
 }
-#raw:hover { color: var(--ink); background: var(--flame); border-color: var(--ink); }
-#raw:focus-visible, #stage:focus-visible { outline: 2px solid var(--flame); outline-offset: 2px; }
-#raw[aria-pressed="true"] { color: var(--ink); background: var(--paper); border-color: var(--ink); }
+#panel .title b { color: var(--flame); letter-spacing: .04em; }
+#panel .size { display: flex; align-items: center; gap: 12px; }
+#px { width: 150px; max-width: 40vw; margin: 0; accent-color: var(--flame); cursor: pointer; }
+#panel .keys { display: flex; flex-wrap: wrap; gap: 0 18px; }
+#panel .keys span { white-space: nowrap; }
+#panel button, #show { font: inherit; color: inherit; background: none; border: 0; border-radius: 0; padding: 0; margin: 0; cursor: pointer; white-space: nowrap; }
+#panel button:hover { color: var(--flame); text-decoration: underline; }
+#panel button[aria-pressed="false"] { color: var(--muted); }
+#panel button[aria-pressed="true"] { color: var(--flame); }
+#stats { color: var(--muted); font-variant-numeric: tabular-nums; }
+#show {
+  position: fixed; left: max(16px, env(safe-area-inset-left, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  font: 13px/1.5 var(--mono); color: var(--paper); background: var(--panel); border: 2px solid var(--ink); padding: 4px 10px;
+}
+#show:hover { color: var(--flame); }
+#panel button:focus-visible, #show:focus-visible, #px:focus-visible, #stage:focus-visible { outline: 2px solid var(--flame); outline-offset: 2px; }
+@media (max-width: 520px) { #panel { font-size: 12px; padding: 10px 12px; } }
 #fail { position: fixed; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; font-size: 14px; line-height: 1.5; }
 </style>
 </head>
 <body>
-<div id="stage" tabindex="0" role="application" aria-label="Flying van scene. Drag to look around, click the van to open or close its side doors.">
+<div id="stage" tabindex="0" role="application" aria-label="Flying van scene. Drag to look around, click the van or press Enter to open or close its side doors.">
   <canvas id="gl"></canvas>
   <canvas id="hud"></canvas>
 </div>
-<button id="raw" type="button" aria-pressed="false" title="Show the gaussian splats without the pixel-art pass">Raw splats</button>
+<div id="panel">
+  <div class="title"><b>VAN SPLAT</b> — gaussian splats, pixel-art pass</div>
+  <div class="size"><label for="px">pixel size</label><input id="px" type="range" min="1" max="12" step="1" value="3"><output id="pxv" for="px">3</output></div>
+  <div class="keys">
+    <span>[drag] orbit</span>
+    <span>[wheel] zoom</span>
+    <span>[click van] doors</span>
+    <button type="button" data-act="palette" title="Next colour palette">[C] palette</button>
+    <button type="button" data-act="outline" aria-pressed="true" title="One-pixel outline">[O] outline</button>
+    <button type="button" data-act="dither" aria-pressed="true" title="Ordered dithering">[D] dither</button>
+    <button type="button" data-act="pause" aria-pressed="false" title="Freeze the animation">[space] pause</button>
+    <button type="button" data-act="raw" aria-pressed="false" title="Show the gaussian splats without the pixel-art pass">[R] raw</button>
+    <button type="button" data-act="hide" title="Hide this panel">[H] hide</button>
+  </div>
+  <div id="stats">&nbsp;</div>
+</div>
+<button id="show" type="button" hidden>[H] controls</button>
 <div id="fail" hidden>This scene needs WebGL2, which this browser did not provide.</div>
 <script>
 (() => {
@@ -99,6 +131,16 @@ const C = {
 const PALETTE = Object.values(C);
 const SKY = [hex(0x5c0b1f), hex(0x8e1126), hex(0xbb172a), hex(0xde2c30)];
 const OUTLINE = hex(0x3a0714);
+// mode 0: the authored palette and banded sky; mode 1: nearest colour in a fixed palette; mode 2: luminance ramp, dark to light
+const PALS = [
+  { name: 'crimson', mode: 0, pal: PALETTE, sky: SKY, outline: OUTLINE },
+  { name: 'midnight', mode: 0, pal: PALETTE, sky: [0x0b0d2a, 0x151a48, 0x222c6e, 0x3a4a9a].map(hex), outline: hex(0x04051a) },
+  { name: 'pico-8', mode: 1, pal: [0x000000, 0x1d2b53, 0x7e2553, 0x008751, 0xab5236, 0x5f574f, 0xc2c3c7, 0xfff1e8, 0xff004d, 0xffa300, 0xffec27, 0x00e436, 0x29adff, 0x83769c, 0xff77a8, 0xffccaa].map(hex), sky: SKY, outline: hex(0x000000) },
+  { name: 'c64', mode: 1, pal: [0x000000, 0xffffff, 0x68372b, 0x70a4b2, 0x6f3d86, 0x588d43, 0x352879, 0xb8c76f, 0x6f4f25, 0x433900, 0x9a6759, 0x444444, 0x6c6c6c, 0x9ad284, 0x6c5eb5, 0x959595].map(hex), sky: SKY, outline: hex(0x000000) },
+  { name: 'game boy', mode: 2, pal: [0x0f380f, 0x306230, 0x8bac0f, 0x9bbc0f].map(hex), sky: SKY, outline: hex(0x0f380f) },
+  { name: '1-bit', mode: 2, pal: [0x1b0a12, 0xffe7d1].map(hex), sky: SKY, outline: hex(0x1b0a12) },
+];
+const PAL_MAX = 48;
 
 /* ------------------------------------------------------------ splat store */
 // Every splat is a 3D gaussian: centre, full 3x3 covariance, colour, opacity,
@@ -495,9 +537,10 @@ function updateDynamic(t) {
 }
 
 /* ================================================================ RENDERER */
-const stage = document.getElementById('stage'), canvas = document.getElementById('gl'), hud = document.getElementById('hud'), rawBtn = document.getElementById('raw');
+const stage = document.getElementById('stage'), canvas = document.getElementById('gl'), hud = document.getElementById('hud');
+const panel = document.getElementById('panel'), showBtn = document.getElementById('show'), pxIn = document.getElementById('px'), pxOut = document.getElementById('pxv'), statsEl = document.getElementById('stats');
 const gl = canvas.getContext('webgl2', { antialias: false, alpha: false, powerPreference: 'high-performance' });
-if (!gl) { document.getElementById('fail').hidden = false; rawBtn.hidden = true; return; }
+if (!gl) { document.getElementById('fail').hidden = false; panel.hidden = true; return; }
 
 const VS = `#version 300 es
 precision highp float; precision highp int; precision highp sampler2D;
@@ -548,12 +591,13 @@ float bayer(ivec2 p) { p &= 3; return (BAY[p.y * 4 + p.x] + 0.5) / 16.0; }`;
 const FS = `#version 300 es
 precision highp float;
 in vec4 vCol; in vec2 vQ; flat in float vFade;
+uniform int uDither;
 out vec4 o;
 ${BAYER}
 void main() {
   float r2 = dot(vQ, vQ);
   if (r2 > 9.0) discard;
-  if (vFade < 0.99 && bayer(ivec2(gl_FragCoord.xy)) > vFade) discard;   // screen-door fade for clouds crossing the view
+  if (vFade < 0.99 && (uDither == 1 ? bayer(ivec2(gl_FragCoord.xy)) : 0.5) > vFade) discard;   // screen-door fade for clouds crossing the view
   float a = min(vCol.a * exp(-0.5 * r2), 0.99);
   if (a < 0.004) discard;
   o = vec4(vCol.rgb * a, a);
@@ -564,50 +608,67 @@ void main() { gl_Position = vec4(aQuad, 0.0, 1.0); }`;
 const PFS = `#version 300 es
 precision highp float; precision highp int;
 uniform sampler2D uScene;
-uniform vec2 uRes; uniform float uTime; uniform int uRaw;
-uniform vec3 uPal[${PALETTE.length}]; uniform vec3 uSky[4]; uniform vec3 uOutline;
+uniform vec2 uRes; uniform float uTime;
+uniform int uRaw, uMode, uPalN, uDither, uOutlineOn;
+uniform vec3 uPal[${PAL_MAX}]; uniform vec3 uSky[4]; uniform vec3 uOutline;
 out vec4 o;
 ${BAYER}
 float h1(float x) { return fract(sin(x * 91.3458) * 47453.5453); }
-vec3 sky(ivec2 p) {
+vec3 skySmooth(float g) {
+  return mix(mix(uSky[0], uSky[1], clamp(g, 0.0, 1.0)), mix(uSky[2], uSky[3], clamp(g - 2.0, 0.0, 1.0)), clamp(g - 1.0, 0.0, 1.0));
+}
+// snap a colour to the active palette; b is this pixel's dither threshold
+vec3 quant(vec3 c, float b) {
+  if (uMode == 2) {
+    // value, not pure luminance: saturated reds must land well above the black van
+    float v = mix(dot(c, vec3(0.299, 0.587, 0.114)), max(c.r, max(c.g, c.b)), 0.6);
+    float f = pow(clamp(v, 0.0, 1.0), 1.3) * float(uPalN - 1);
+    float i0 = floor(f);
+    return uPal[clamp(int(i0) + (smoothstep(0.25, 0.75, f - i0) > b ? 1 : 0), 0, uPalN - 1)];
+  }
+  float d1 = 1e9, d2 = 1e9; vec3 c1 = c, c2 = c;
+  for (int i = 0; i < ${PAL_MAX}; i++) {
+    if (i >= uPalN) break;
+    vec3 df = (c - uPal[i]) * vec3(1.0, 1.0, 1.3);
+    float dd = dot(df, df);
+    if (dd < d1) { d2 = d1; c2 = c1; d1 = dd; c1 = uPal[i]; } else if (dd < d2) { d2 = dd; c2 = uPal[i]; }
+  }
+  float t = sqrt(d1) / (sqrt(d1) + sqrt(d2) + 1e-6);
+  float lo = uMode == 1 ? 0.36 : 0.2;                       // sparse palettes: dither only near the midpoint
+  return (uDither == 1 && (t - lo) / (0.5 - lo) > b) ? c2 : c1;   // dither between the two nearest
+}
+vec3 sky(ivec2 p, float b) {
   float g = (1.0 - (float(p.y) + 0.5) / uRes.y) * 3.0;
-  float gi = floor(g);
-  int idx = clamp(int(gi) + (smoothstep(0.2, 0.8, g - gi) > bayer(p) ? 1 : 0), 0, 3);
   // thin streaks rushing past: we are flying
-  float row = float(p.y), hr = h1(row);
+  float row = floor((float(p.y) + 0.5) / uRes.y * 240.0), hr = h1(row);
+  bool streak = false;
   if (hr > 0.9) {
     float x = fract(float(p.x) / uRes.x * 0.6 + uTime * (0.25 + hr * 0.5) + hr * 37.0);
-    if (x < 0.05 + 0.06 * h1(row + 3.0)) idx = min(idx + 1, 3);
+    streak = x < 0.05 + 0.06 * h1(row + 3.0);
   }
-  return uSky[idx];
+  if (uMode != 0) return quant(skySmooth(g + (streak ? 0.8 : 0.0)), b);
+  float gi = floor(g);
+  int idx = clamp(int(gi) + (smoothstep(0.2, 0.8, g - gi) > b ? 1 : 0), 0, 3);
+  return uSky[streak ? min(idx + 1, 3) : idx];
 }
 float alphaAt(ivec2 p) { return texelFetch(uScene, clamp(p, ivec2(0), ivec2(uRes) - 1), 0).a; }
 void main() {
   ivec2 p = ivec2(gl_FragCoord.xy);
   vec4 s = texelFetch(uScene, p, 0);
   if (uRaw == 1) {
-    float g = (1.0 - gl_FragCoord.y / uRes.y) * 3.0;
-    vec3 bg = mix(mix(uSky[0], uSky[1], clamp(g, 0.0, 1.0)), mix(uSky[2], uSky[3], clamp(g - 2.0, 0.0, 1.0)), clamp(g - 1.0, 0.0, 1.0));
-    o = vec4(s.rgb + bg * (1.0 - s.a), 1.0);
+    o = vec4(s.rgb + skySmooth((1.0 - gl_FragCoord.y / uRes.y) * 3.0) * (1.0 - s.a), 1.0);
     return;
   }
-  float b = bayer(p);
+  float b = uDither == 1 ? bayer(p) : 0.5;
   vec3 col;
   if (s.a > mix(0.3, 0.7, b)) {
-    // snap to the two nearest palette colours and dither between them
-    vec3 c = s.rgb / s.a;
-    float d1 = 1e9, d2 = 1e9; vec3 c1 = c, c2 = c;
-    for (int i = 0; i < ${PALETTE.length}; i++) {
-      vec3 df = (c - uPal[i]) * vec3(1.0, 1.0, 1.3);
-      float dd = dot(df, df);
-      if (dd < d1) { d2 = d1; c2 = c1; d1 = dd; c1 = uPal[i]; } else if (dd < d2) { d2 = dd; c2 = uPal[i]; }
-    }
-    float t = sqrt(d1) / (sqrt(d1) + sqrt(d2) + 1e-6);
-    col = (t - 0.2) / 0.3 > b ? c2 : c1;
+    col = quant(s.rgb / s.a, b);
   } else {
-    col = sky(p);
-    float n = max(max(alphaAt(p + ivec2(1, 0)), alphaAt(p - ivec2(1, 0))), max(alphaAt(p + ivec2(0, 1)), alphaAt(p - ivec2(0, 1))));
-    if (n > 0.72) col = uOutline;
+    col = sky(p, b);
+    if (uOutlineOn == 1) {
+      float n = max(max(alphaAt(p + ivec2(1, 0)), alphaAt(p - ivec2(1, 0))), max(alphaAt(p + ivec2(0, 1)), alphaAt(p - ivec2(0, 1))));
+      if (n > 0.72) col = uOutline;
+    }
   }
   o = vec4(col, 1.0);
 }`;
@@ -659,10 +720,13 @@ gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParame
 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
 let raw = false, W = 1, H = 1, px = 3, lw = 1, lh = 1, hudDirty = true;
+let pxUser = 0, palIdx = 0, outlineOn = true, ditherOn = true, paused = false;   // pxUser 0 = pick a size that suits the window
 function resize() {
   W = Math.max(1, stage.clientWidth); H = Math.max(1, stage.clientHeight);
   const art = Math.max(1, Math.round(Math.min(W, H) / 240));
-  px = raw ? 1 : art;
+  const size = pxUser || Math.min(art, 12);
+  px = raw ? 1 : size;
+  pxIn.value = size; pxOut.textContent = size;
   lw = Math.ceil(W / px); lh = Math.ceil(H / px);
   canvas.width = lw; canvas.height = lh; canvas.style.width = lw * px + 'px'; canvas.style.height = lh * px + 'px';
   hud.width = Math.ceil(W / art); hud.height = Math.ceil(H / art); hud.style.width = hud.width * art + 'px'; hud.style.height = hud.height * art + 'px';
@@ -779,16 +843,37 @@ const release = e => {
 };
 stage.addEventListener('pointerup', release); stage.addEventListener('pointercancel', release);
 stage.addEventListener('wheel', e => { e.preventDefault(); cam.glide = null; cam.zoom = clamp(cam.zoom * Math.exp(e.deltaY * 0.0012), 0.5, 1.8); cam.lastInput = performance.now() / 1000; }, { passive: false });
-stage.addEventListener('keydown', e => {
-  const k = e.key;
-  if (k === 'Enter' || k === ' ') { toggleDoors(); e.preventDefault(); }
-  else if (k === 'ArrowLeft') cam.az -= 0.12; else if (k === 'ArrowRight') cam.az += 0.12;
+const ACTS = {
+  palette() { palIdx = (palIdx + 1) % PALS.length; },
+  outline() { outlineOn = !outlineOn; },
+  dither() { ditherOn = !ditherOn; },
+  pause() { paused = !paused; },
+  raw() { raw = !raw; resize(); },
+  hide() { panel.hidden = !panel.hidden; showBtn.hidden = !panel.hidden; },
+};
+function act(name) {
+  ACTS[name]();
+  const on = { outline: outlineOn, dither: ditherOn, pause: paused, raw };
+  for (const b of panel.querySelectorAll('button[aria-pressed]')) b.setAttribute('aria-pressed', String(on[b.dataset.act]));
+  statsAt = 0;
+}
+panel.addEventListener('click', e => { const b = e.target.closest('button[data-act]'); if (b) act(b.dataset.act); });
+showBtn.addEventListener('click', () => act('hide'));
+pxIn.addEventListener('input', () => { pxUser = +pxIn.value; resize(); statsAt = 0; });
+const KEYS = { c: 'palette', o: 'outline', d: 'dither', r: 'raw', h: 'hide' };
+addEventListener('keydown', e => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = e.key, tag = e.target.tagName;
+  if (k === ' ') { if (tag === 'BUTTON') return; act('pause'); e.preventDefault(); return; }
+  if (KEYS[k.toLowerCase()]) { act(KEYS[k.toLowerCase()]); return; }
+  if (tag === 'BUTTON' || tag === 'INPUT') return;   // let Enter and the arrows work the focused control
+  if (k === 'Enter') { toggleDoors(); return; }
+  if (k === 'ArrowLeft') cam.az -= 0.12; else if (k === 'ArrowRight') cam.az += 0.12;
   else if (k === 'ArrowUp') cam.el = clamp(cam.el + 0.08, -0.5, 1.1); else if (k === 'ArrowDown') cam.el = clamp(cam.el - 0.08, -0.5, 1.1);
   else return;
-  if (k.startsWith('Arrow')) cam.glide = null;
-  cam.lastInput = performance.now() / 1000;
+  e.preventDefault();
+  cam.glide = null; cam.lastInput = performance.now() / 1000;
 });
-rawBtn.addEventListener('click', () => { raw = !raw; rawBtn.setAttribute('aria-pressed', String(raw)); rawBtn.textContent = raw ? 'Pixel art' : 'Raw splats'; resize(); });
 
 /* ------------------------------------------------------- pixel-font hints */
 const FONT = { A: '010101111101101', C: '011100100100011', D: '110101101101110', E: '111100110100111', G: '011100101101011', H: '101101111101101', I: '111010010010111', K: '101101110101101', L: '100100100100111', N: '110101101101101', O: '111101101101111', R: '110101110101101', S: '011100010001110', T: '111010010010010', U: '101101101101111', V: '101101101101010', ' ': '000000000000000' };
@@ -809,7 +894,7 @@ function drawHud(t) {
   hudKey = key; hudDirty = false;
   hctx.clearRect(0, 0, hud.width, hud.height);
   const big = hud.width >= 150 ? 2 : 1;
-  if (!everOpened) { if (blink) text('CLICK THE VAN', hud.width / 2, hud.height - 14 - 5 * big, big, '#fff3e6', '#07070c'); text('DRAG TO LOOK AROUND', hud.width / 2, hud.height - 10, 1, '#ffd23e', '#07070c'); }
+  if (!everOpened && blink) text('CLICK THE VAN', hud.width / 2, 8, big, '#fff3e6', '#07070c');
 }
 
 /* ------------------------------------------------------------------ frame */
@@ -824,21 +909,23 @@ function updateWorlds() {
   gl.bindTexture(gl.TEXTURE_2D, tGrp);
   gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 5, MAXG, gl.RGBA, gl.FLOAT, gData);
 }
-const HEAD_PIVOT = [0, 0.98, 0];
-let last = 0, swayAmp = 0.26, jsMs = 0;
+const HEAD_PIVOT = [0, 0.98, 0], palBuf = new Float32Array(PAL_MAX * 3);
+let last = 0, simT = 0, swayAmp = 0.26, jsMs = 0, frames = 0, statsAt = 0, fps = 0, fpsFrom = 0;
 function frame(ms) {
   const t0 = performance.now();
-  const t = ms / 1000, dt = Math.min(0.05, Math.max(0, t - last)); last = t;
+  const tr = ms / 1000, dtr = Math.min(0.05, Math.max(0, tr - last)); last = tr;
+  if (!paused) simT += dtr;
+  const t = simT, dt = paused ? 0 : dtr;
 
   // camera
   if (cam.glide) {
-    const g = cam.glide, k = 1 - Math.exp(-dt * 3.2);
+    const g = cam.glide, k = 1 - Math.exp(-dtr * 3.2);
     cam.az += (g.az - cam.az) * k; cam.el += (g.el - cam.el) * k; cam.zoom += (g.zoom - cam.zoom) * k;
     if (Math.abs(g.az - cam.az) + Math.abs(g.el - cam.el) + Math.abs(g.zoom - cam.zoom) < 0.002) cam.glide = null;
   }
-  const idle = reduceMotion ? 0 : smooth(3, 7, t - cam.lastInput);
+  const idle = reduceMotion ? 0 : smooth(3, 7, tr - cam.lastInput);
   const sway = doorT[0] || doorT[1] ? 0.1 : 0.26;
-  swayAmp += (sway - swayAmp) * (1 - Math.exp(-dt * 2));
+  swayAmp += (sway - swayAmp) * (1 - Math.exp(-dtr * 2));
   const az = cam.az + swayAmp * Math.sin(t * 0.21) * idle, el = cam.el + 0.05 * Math.sin(t * 0.17 + 1) * idle;
   const asp = W / H;
   camDist = Math.max(2.9 / TANV, 4.0 / (TANV * asp)) * cam.zoom;
@@ -909,7 +996,7 @@ function frame(ms) {
   gl.uniform1i(splatProg.u.uPos, 0); gl.uniform1i(splatProg.u.uCovA, 1); gl.uniform1i(splatProg.u.uCovB, 2); gl.uniform1i(splatProg.u.uCol, 3); gl.uniform1i(splatProg.u.uGrp, 4);
   gl.uniformMatrix4fv(splatProg.u.uView, false, view); gl.uniformMatrix4fv(splatProg.u.uProj, false, proj);
   gl.uniform2f(splatProg.u.uVp, lw, lh); gl.uniform2f(splatProg.u.uFocal, proj[0] * lw / 2, proj[5] * lh / 2);
-  gl.uniform1f(splatProg.u.uSig, raw ? 0.3 : 1);
+  gl.uniform1f(splatProg.u.uSig, raw ? 0.3 : 1); gl.uniform1i(splatProg.u.uDither, ditherOn || raw ? 1 : 0);
   gl.bindVertexArray(vao);
   gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, n);
 
@@ -920,11 +1007,20 @@ function frame(ms) {
   gl.useProgram(postProg.p);
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, sceneTex);
   gl.uniform1i(postProg.u.uScene, 0); gl.uniform2f(postProg.u.uRes, lw, lh); gl.uniform1f(postProg.u.uTime, t); gl.uniform1i(postProg.u.uRaw, raw ? 1 : 0);
-  gl.uniform3fv(postProg.u.uPal, PALETTE.flat()); gl.uniform3fv(postProg.u.uSky, SKY.flat()); gl.uniform3fv(postProg.u.uOutline, OUTLINE);
+  const P = PALS[palIdx];
+  palBuf.fill(0); palBuf.set(P.pal.flat());
+  gl.uniform3fv(postProg.u.uPal, palBuf); gl.uniform3fv(postProg.u.uSky, P.sky.flat()); gl.uniform3fv(postProg.u.uOutline, P.outline);
+  gl.uniform1i(postProg.u.uMode, P.mode); gl.uniform1i(postProg.u.uPalN, P.pal.length); gl.uniform1i(postProg.u.uDither, ditherOn ? 1 : 0); gl.uniform1i(postProg.u.uOutlineOn, outlineOn ? 1 : 0);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   gl.activeTexture(gl.TEXTURE0);
 
-  drawHud(t);
+  drawHud(tr);
+  frames++;
+  if (ms - statsAt > 500) {
+    if (ms - fpsFrom > 400) { fps = Math.round(frames * 1000 / (ms - fpsFrom)); frames = 0; fpsFrom = ms; }
+    statsAt = ms;
+    statsEl.textContent = `${count.toLocaleString('en-US')} splats · ${lw}×${lh} px · ${fps} fps · ${raw ? 'raw' : P.name}${paused ? ' · paused' : ''}`;
+  }
   requestAnimationFrame(frame);
 }
 window.vanSplat = { splats: count, cam, toggleDoors, doors: doorT };
